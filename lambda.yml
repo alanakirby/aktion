@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+
+  LambdaBucketName:
+    Type: String
+    Description: The name of the S3 bucket that has the code
+
+  S3FunctionCodeVersion:
+    Type: String
+    Description: The S3ObjectVersion for the function code
+
+Resources:
+
+  ScheduledRule:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: cron(00 09 ? * MON *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt Lambda.Arn
+          Id: !Ref Lambda
+
+  ScheduledEventPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Lambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledRule.Arn
+
+  Lambda:
+    Type:                           AWS::Lambda::Function
+    Properties:
+      FunctionName:                 aktion
+      Handler:                      aktion.lambda_handler
+      Timeout:                      60
+      Role:                         !GetAtt LambdaRole.Arn
+      Code:
+        S3Bucket:                   !Ref LambdaBucketName
+        S3Key:                      code.zip
+        S3ObjectVersion:            !Ref S3FunctionCodeVersion
+      Runtime:                      python3.7
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aktion-lambda
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      Policies:
+      - PolicyName: aktion-lambda
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: ses:SendEmail
+              Resource:
+                - arn:aws:ses:<SES_VERIFIED_REGION>:<ACCOUNT_ID>:identity/<SENDER_EMAIL>
+                - arn:aws:ses:<SES_VERIFIED_REGION>:<ACCOUNT_ID>:identity/<RECIEVER_EMAIL>
+            - Effect: Allow
+              Action:
+                - s3:ListAllMyBuckets
+                - s3:GetBucketPublicAccessBlock
+                - s3:PutBucketPublicAccessBlock
+                - s3:GetObject*
+                - s3:PutObject*
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: arn:aws:logs:*:*:*

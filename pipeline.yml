@@ -1,0 +1,222 @@
+Parameters:
+
+  GithubOwner:
+    Type:                  String
+    Description:           Name of the owner (Organization or person) in Github that owns the repo
+    Default:               alanakirby
+
+  GithubRepo:
+    Type:                  String
+    Description:           Name of Github repo
+    Default:               aktion
+
+  GithubBranch:
+    Type:                  String
+    Description:           Name of Github branch
+    Default:               master
+
+Resources:
+
+  PipelineS3Bucket:
+    Type: AWS::S3::Bucket
+
+  LambdaS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+
+  Pipeline:
+    DependsOn:
+      - LambdaS3Bucket
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Ref GithubRepo
+      RoleArn: !GetAtt AutomationRole.Arn
+      RestartExecutionOnUpdate: true
+      ArtifactStore:
+        Type: S3
+        Location: !Ref PipelineS3Bucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Github
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Version: 1
+                Provider: GitHub
+              OutputArtifacts:
+                - Name: source
+              Configuration:
+                Branch: !Ref GithubBranch
+                OAuthToken: '{{resolve:secretsmanager:Github:SecretString:PersonalAccessToken}}'
+                Owner: !Ref GithubOwner
+                Repo: !Ref GithubRepo
+                PollForSourceChanges: false
+              RunOrder: 1
+        - Name: SelfUpdate
+          Actions:
+            - Name: Pipeline
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              RunOrder: 1
+              InputArtifacts:
+                - Name: source
+              Configuration:
+                ActionMode: REPLACE_ON_FAILURE
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt AutomationRole.Arn
+                StackName: !Ref AWS::StackName
+                TemplatePath: source::pipeline.yml
+        - Name: Build
+          Actions:
+            - Name: Lambda
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              RunOrder: 1
+              InputArtifacts:
+                - Name: source
+              OutputArtifacts:
+                - Name: output
+              Configuration:
+                ProjectName: !Ref Deploy
+        - Name: Deploy
+          Actions:
+            - Name: Lambda
+              InputArtifacts:
+                - Name: source
+                - Name: output
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              RunOrder: 1
+              Configuration:
+                ActionMode: REPLACE_ON_FAILURE
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt AutomationRole.Arn
+                StackName: aktion-lambda
+                TemplatePath: source::lambda.yml
+                ParameterOverrides: !Sub |
+                  {
+                    "LambdaBucketName": "${LambdaS3Bucket}",
+                    "S3FunctionCodeVersion": { "Fn::GetParam": [ "output", "output.json", "VersionId" ] }
+                  }
+
+  GHWebHook:
+    DependsOn:
+      - Pipeline
+    Type: AWS::CodePipeline::Webhook
+    Properties:
+      AuthenticationConfiguration:
+        SecretToken: '{{resolve:secretsmanager:/aktion/github:SecretString:WebhookSecret}}'
+      Filters:
+        - JsonPath: '$.ref'
+          MatchEquals: !Sub refs/heads/${GithubBranch}
+      Authentication: GITHUB_HMAC
+      TargetPipeline: !Ref Pipeline
+      TargetAction: GitHub
+      Name: aktion
+      TargetPipelineVersion: !GetAtt Pipeline.Version
+
+  Deploy:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: aktion
+      ServiceRole: !GetAtt AutomationRole.Arn
+      TimeoutInMinutes: 5
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:2.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec:
+          !Sub |
+            version: 0.2
+            artifacts:
+              discard-paths: yes
+              files:
+                - output.json
+            phases:
+              install:
+                runtime-versions:
+                  python: 3.7
+              build:
+                commands:
+                  - cd src;
+                  - pip3 install -r requirements.txt -t .;
+                  - zip -r code.zip .;
+              post_build:
+                commands:
+                  - du -hs *
+                  - aws s3api put-object --bucket ${LambdaS3Bucket} --key code.zip --body code.zip --output json > ../output.json;
+
+  AutomationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aktion
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+                - codebuild.amazonaws.com
+                - cloudformation.amazonaws.com
+            Action:
+                - sts:AssumeRole
+      Policies:
+        - PolicyName: aktion
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: cloudformation:*
+                Resource: '*'
+              - Effect: Allow
+                Action: codepipeline:*
+                Resource: '*'
+              - Effect: Allow
+                Action: lambda:*
+                Resource: '*'
+              - Effect: Allow
+                Action: codebuild:*
+                Resource: '*'
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/aktion/github-??????
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action: events:*
+                Resource: '*'
+              - Effect: Allow
+                Action: s3:*
+                Resource: '*'
+              - Effect: Allow
+                Action: iam:*
+                Resource:
+                  - !Sub arn:aws:iam::${AWS::AccountId}:policy/aktion*
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/aktion*
+
+Outputs:
+  WebHookURL:
+    Value:  !GetAtt GHWebHook.Url
+    Export:
+      Name: !Sub aktion-webhook-url
