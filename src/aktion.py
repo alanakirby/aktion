@@ -26,7 +26,7 @@ def lambda_handler(event, context):
     print('Connecting to bucket.......................................( ͡° ͜ʖ ͡°)')
     s3_resource = boto3.resource('s3')
     s3_client = boto3.client('s3')
-    bucket = '<S3_BUCKET_NAME>'
+    bucket = os.environ.get('BUCKET_NAME')
     key = '/tmp/output.txt'
 
     # Download last file
@@ -52,7 +52,7 @@ def lambda_handler(event, context):
 
     # Store list in S3 and upload file
     print('Storing today\'s services in S3.......................ヽ(〃＾▽＾〃)ﾉ')
-    s3_client.upload_file('/tmp/output.txt', '<S3_BUCKET_NAME>', '/tmp/output.txt')
+    s3_client.upload_file('/tmp/output.txt', bucket, '/tmp/output.txt')
 
     # Download new file - remove download and just use output.txt
     print('Loading today\'s services...............................(づ｡◕‿‿◕｡)づ')
@@ -86,6 +86,10 @@ def lambda_handler(event, context):
     diff_read = diff_new.read()
 
 
+    SENDER = os.environ.get('SENDER_EMAIL')
+    RECIPIENT = os.environ.get('RECEIVER_EMAIL')
+    SES_REGION = os.environ.get('SES_REGION')
+
     # if its empty don't send it
     if os.path.getsize('/tmp/difference.txt') > 0:
     # n = print(new_services)
@@ -94,9 +98,6 @@ def lambda_handler(event, context):
         print('___________________________________________________________________')
 
         # AWS SES
-        SENDER = '<EMAIL>'
-        RECIPIENT = '<EMAIL>'
-        AWS_REGION = '<SES_VERIFIED_REGION>'
         SUBJECT = 'New AWS Services and Actions have been released this week!'
         BODY_TEXT = ('New AWS Services and Actions have been released this week!\n'
                      'Here are the newbies to action on:\n' + str(diff_read))
@@ -111,7 +112,7 @@ def lambda_handler(event, context):
 
         CHARSET = 'UTF-8'
 
-        ses_client = boto3.client('ses',region_name=AWS_REGION)
+        ses_client = boto3.client('ses',region_name=SES_REGION)
 
         try:
             ses_response = ses_client.send_email(
@@ -150,9 +151,6 @@ def lambda_handler(event, context):
         print('___________________________________________________________________')
 
         # AWS SES
-        SENDER = '<EMAIL>'
-        RECIPIENT = '<EMAIL>'
-        AWS_REGION = '<SES_VERIFIED_REGION>'
         SUBJECT = 'AWS has taken a holiday this week!'
         BODY_TEXT = ('AWS has taken a holiday this week!\n'
                      'No new services or actions this week.')
@@ -166,7 +164,7 @@ def lambda_handler(event, context):
 
         CHARSET = 'UTF-8'
 
-        ses_client = boto3.client('ses',region_name=AWS_REGION)
+        ses_client = boto3.client('ses',region_name=SES_REGION)
 
         try:
             ses_response = ses_client.send_email(

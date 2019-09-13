@@ -10,7 +10,27 @@ Parameters:
     Type: String
     Description: The S3ObjectVersion for the function code
 
+  SesRegion:
+    Type: String
+    Default: us-east-1
+
+  SesSenderEmail:
+    Type: String
+    Description: -<
+      Email address to display as the sender of notifications.
+      Address or Domain must be verified in SES.
+
+  SesRecieverEmail:
+    Type: String
+    Description: -<
+      Email address to send notifications to.
+      Address or Domain must be verified in SES.
+
 Resources:
+
+  AktionBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
 
   ScheduledRule:
     Type: AWS::Events::Rule
@@ -36,6 +56,12 @@ Resources:
       Handler:                      aktion.lambda_handler
       Timeout:                      60
       Role:                         !GetAtt LambdaRole.Arn
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref AktionBucket
+          SENDER_EMAIL: !Ref SesSenderEmail
+          RECEIVER_EMAIL: !Ref SesRecieverEmail
+          SES_REGION: !Ref SesRegion
       Code:
         S3Bucket:                   !Ref LambdaBucketName
         S3Key:                      code.zip
@@ -64,8 +90,8 @@ Resources:
             - Effect: Allow
               Action: ses:SendEmail
               Resource:
-                - arn:aws:ses:<SES_VERIFIED_REGION>:<ACCOUNT_ID>:identity/<SENDER_EMAIL>
-                - arn:aws:ses:<SES_VERIFIED_REGION>:<ACCOUNT_ID>:identity/<RECIEVER_EMAIL>
+                - !Sub arn:aws:ses:${SesRegion}:${AWS::AccountId}:identity/${SesSenderEmail}
+                - !Sub arn:aws:ses:${SesRegion}:${AWS::AccountId}:identity/${SesRecieverEmail}
             - Effect: Allow
               Action:
                 - s3:ListAllMyBuckets
