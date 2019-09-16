@@ -16,13 +16,13 @@ Parameters:
 
   SesSenderEmail:
     Type: String
-    Description: -<
+    Description: >-
       Email address to display as the sender of notifications.
       Address or Domain must be verified in SES.
 
   SesRecieverEmail:
     Type: String
-    Description: -<
+    Description: >-
       Email address to send notifications to.
       Address or Domain must be verified in SES.
 
@@ -94,12 +94,11 @@ Resources:
                 - !Sub arn:aws:ses:${SesRegion}:${AWS::AccountId}:identity/${SesRecieverEmail}
             - Effect: Allow
               Action:
-                - s3:ListAllMyBuckets
-                - s3:GetBucketPublicAccessBlock
-                - s3:PutBucketPublicAccessBlock
                 - s3:GetObject*
                 - s3:PutObject*
-              Resource: '*'
+              Resource:
+                - !Sub arn:aws:s3:::${AktionBucket}/*
+                - !Sub arn:aws:s3:::${AktionBucket}
             - Effect: Allow
               Action:
                 - logs:CreateLogGroup
