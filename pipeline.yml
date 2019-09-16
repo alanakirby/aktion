@@ -1,27 +1,45 @@
 Parameters:
 
   GithubOwner:
-    Type:                  String
-    Description:           Name of the owner (Organization or person) in Github that owns the repo
-    Default:               alanakirby
+    Type: String
+    Description: Name of the owner (Organization or person) in Github that owns the repo
+    Default: alanakirby
 
   GithubRepo:
-    Type:                  String
-    Description:           Name of Github repo
-    Default:               aktion
+    Type: String
+    Description: Name of Github repo
+    Default: aktion
 
   GithubBranch:
-    Type:                  String
-    Description:           Name of Github branch
-    Default:               master
+    Type: String
+    Description: Name of Github branch
+    Default: master
+
+  SesRegion:
+    Type: String
+    Default: us-east-1
+
+  SesSenderEmail:
+    Type: String
+    Description: >-
+      Email address to display as the sender of notifications.
+      Address or Domain must be verified in SES.
+
+  SesRecieverEmail:
+    Type: String
+    Description: >-
+      Email address to send notifications to.
+      Address or Domain must be verified in SES.
 
 Resources:
 
   PipelineS3Bucket:
     Type: AWS::S3::Bucket
+    DependsOn: AutomationRole
 
   LambdaS3Bucket:
     Type: AWS::S3::Bucket
+    DependsOn: AutomationRole
     Properties:
       VersioningConfiguration:
         Status: Enabled
@@ -53,7 +71,6 @@ Resources:
                 OAuthToken: '{{resolve:secretsmanager:Github:SecretString:PersonalAccessToken}}'
                 Owner: !Ref GithubOwner
                 Repo: !Ref GithubRepo
-                PollForSourceChanges: false
               RunOrder: 1
         - Name: SelfUpdate
           Actions:
@@ -72,6 +89,15 @@ Resources:
                 RoleArn: !GetAtt AutomationRole.Arn
                 StackName: !Ref AWS::StackName
                 TemplatePath: source::pipeline.yml
+                ParameterOverrides: !Sub |
+                  {
+                    "GithubOwner": "${GithubOwner}",
+                    "GithubRepo": "${GithubRepo}",
+                    "GithubBranch": "${GithubBranch}",
+                    "SesRegion": "${SesRegion}",
+                    "SesSenderEmail": "${SesSenderEmail}",
+                    "SesRecieverEmail": "${SesRecieverEmail}"
+                  }
         - Name: Build
           Actions:
             - Name: Lambda
@@ -108,24 +134,11 @@ Resources:
                 ParameterOverrides: !Sub |
                   {
                     "LambdaBucketName": "${LambdaS3Bucket}",
+                    "SesRegion": "${SesRegion}",
+                    "SesSenderEmail": "${SesSenderEmail}",
+                    "SesRecieverEmail": "${SesRecieverEmail}",
                     "S3FunctionCodeVersion": { "Fn::GetParam": [ "output", "output.json", "VersionId" ] }
                   }
-
-  GHWebHook:
-    DependsOn:
-      - Pipeline
-    Type: AWS::CodePipeline::Webhook
-    Properties:
-      AuthenticationConfiguration:
-        SecretToken: '{{resolve:secretsmanager:/aktion/github:SecretString:WebhookSecret}}'
-      Filters:
-        - JsonPath: '$.ref'
-          MatchEquals: !Sub refs/heads/${GithubBranch}
-      Authentication: GITHUB_HMAC
-      TargetPipeline: !Ref Pipeline
-      TargetAction: GitHub
-      Name: aktion
-      TargetPipelineVersion: !GetAtt Pipeline.Version
 
   Deploy:
     Type: AWS::CodeBuild::Project
@@ -196,7 +209,7 @@ Resources:
                 Resource: '*'
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
-                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/aktion/github-??????
+                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:Github-??????
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
@@ -214,9 +227,3 @@ Resources:
                 Resource:
                   - !Sub arn:aws:iam::${AWS::AccountId}:policy/aktion*
                   - !Sub arn:aws:iam::${AWS::AccountId}:role/aktion*
-
-Outputs:
-  WebHookURL:
-    Value:  !GetAtt GHWebHook.Url
-    Export:
-      Name: !Sub aktion-webhook-url
