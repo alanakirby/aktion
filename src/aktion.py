@@ -27,17 +27,11 @@ def lambda_handler(event, context):
     s3_resource = boto3.resource('s3')
     s3_client = boto3.client('s3')
     bucket = os.environ.get('BUCKET_NAME')
-
-    past_output_filename = '/tmp/previous.txt'
-    past_output_s3_key = 'previous.txt'
-    current_output_filename = '/tmp/latest.txt'
-    current_output_s3_key = 'latest.txt'
-    diff_filename = '/tmp/difference.txt'
-    diff_s3_key = 'difference.txt'
+    key = '/tmp/output.txt'
 
     # Download last file
-    print('Loading previous services................................(~˘▾˘)~')
-    s3_client.download_file(bucket, current_output_s3_key, past_output_filename)
+    print('Loading yesterday\'s services................................(~˘▾˘)~')
+    s3_client.download_file(bucket, key, '/tmp/past-output.txt')
 
     print('Gathering today\'s services..................................~(˘▾˘~)')
     response = requests.get('https://awspolicygen.s3.amazonaws.com/js/policies.js')
@@ -45,8 +39,7 @@ def lambda_handler(event, context):
     content_dict = json.loads(content_json)['serviceMap']
 
     service_actions = []
-    for service, values in content_dict.items():
-        service_name = values['StringPrefix']
+    for service_name, values in content_dict.items():
         for action in values['Actions']:
             service_actions.append(f'{service_name}:{action}')
 
@@ -54,15 +47,23 @@ def lambda_handler(event, context):
 
     service_string = '\n'.join(service_actions)
 
-    with open(current_output_filename, 'w') as f:
+    with open('/tmp/output.txt', 'w') as f:
             f.write(service_string)
+
+    # Store list in S3 and upload file
+    print('Storing today\'s services in S3.......................ヽ(〃＾▽＾〃)ﾉ')
+    s3_client.upload_file('/tmp/output.txt', bucket, '/tmp/output.txt')
+
+    # Download new file - remove download and just use output.txt
+    print('Loading today\'s services...............................(づ｡◕‿‿◕｡)づ')
+    s3_client.download_file(bucket, key, '/tmp/latest-output.txt')
 
     # Compare files
     print('Comparing services...................(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧ ✧ﾟ･: *ヽ(◕ヮ◕ヽ)')
-    past_file = open(past_output_filename).readlines()
-    latest_file = open(current_output_filename).readlines()
+    past_file = open('/tmp/past-output.txt').readlines()
+    latest_file = open('/tmp/latest-output.txt').readlines()
 
-    with open(diff_filename, 'w') as d:
+    with open('/tmp/difference.txt', 'w') as d:
         for line in difflib.unified_diff(past_file, latest_file):
             d.write(line)
 
@@ -70,18 +71,18 @@ def lambda_handler(event, context):
     array = []
 
     # Delete dumb extra bits
-    with open(diff_filename, 'r') as file:
+    with open('/tmp/difference.txt', 'r') as file:
         for line in file.readlines():
             if re.match(r"^\+\w", line):
                 remove = re.sub(r"^\++", '', line)
                 if remove.strip() is not '':
                     array.append(remove)
 
-    with open(diff_filename, 'w') as c:
+    with open('/tmp/difference.txt', 'w') as c:
         result = ''.join(array)
         c.write(result)
 
-    diff_new = open(diff_filename, 'r')
+    diff_new = open('/tmp/difference.txt', 'r')
     diff_read = diff_new.read()
 
 
@@ -171,6 +172,9 @@ def lambda_handler(event, context):
                     'ToAddresses': [
                         RECIPIENT,
                     ],
+                    'BccAddresses': [
+                        BCC,
+                    ],
                 },
                 Message={
                     'Body': {
@@ -196,9 +200,3 @@ def lambda_handler(event, context):
         else:
             print("Email sent! Message ID:"),
             print(ses_response['MessageId'])
-
-    # Store latest results in S3
-    print('Storing results in S3.......................ヽ(〃＾▽＾〃)ﾉ')
-    s3_client.upload_file(past_output_filename, bucket, past_output_s3_key)
-    s3_client.upload_file(current_output_filename, bucket, current_output_s3_key)
-    s3_client.upload_file(diff_filename, bucket, diff_s3_key)
